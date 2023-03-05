@@ -12,13 +12,7 @@
 #include <driver/i2s.h>
 #include <driver/i2c.h>
 
-// Basic I2S and I2C Configuration
-#define I2S_NUM I2S_NUM_0
-
-#define I2C_NUM I2C_NUM_0
 #define ES8388_ADDR 0x20
-
-#define I2S_PORT I2S_NUM_0
 
 int player_volume=50;
 audio_event_iface_handle_t evt;
@@ -56,14 +50,14 @@ static esp_err_t es8388_init()
 	i2c_config_t i2c_config = {
 		.mode = I2C_MODE_MASTER,
 		.sda_io_num = GPIO_NUM_18,
-		.sda_pullup_en = true,
 		.scl_io_num = GPIO_NUM_23,
+		.sda_pullup_en = true,
 		.scl_pullup_en = true,
 		.master.clk_speed = 100000
 	};
 
-	res |= i2c_param_config(I2C_NUM, &i2c_config);
-	res |= i2c_driver_install(I2C_NUM, i2c_config.mode, 0, 0, 0);
+	res |= i2c_param_config(I2C_NUM_0, &i2c_config);
+	res |= i2c_driver_install(I2C_NUM_0, i2c_config.mode, 0, 0, 0);
 
 	/* mute DAC during setup, power up all systems, slave mode */
 	res |= es_write_reg(ES8388_ADDR, ES8388_DACCONTROL3, 0x04);
@@ -116,42 +110,6 @@ static esp_err_t es8388_init()
 	res |= es_write_reg(ES8388_ADDR, ES8388_ADCPOWER, 0x09);
 
 	return res;
-}
-
-void init_I2S() {
-	ESP_LOGI(TAG, "=============es8388_init=================================");
-	if (es8388_init() != ESP_OK)
-		ESP_LOGI(TAG, "[es8388_init] Audio codec initialization failed!");
-	ESP_LOGI(TAG, "=============init_I2S=================================");
-	i2s_config_t i2s_read_config = {
-		.mode = I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_RX,
-		.sample_rate = 96000,
-		.bits_per_sample = 16,
-		.communication_format = I2S_COMM_FORMAT_STAND_I2S,				// 0x01
-		//		.communication_format = 0x02,
-		//		.communication_format = I2S_COMM_FORMAT_STAND_MSB,			// 0x03
-		//		.communication_format = I2S_COMM_FORMAT_STAND_PCM_SHORT,	// 0x04 no funciona
-		//		.communication_format = I2S_COMM_FORMAT_STAND_PCM_LONG,		// 0x0C	funciona, pero mal
-		//		.communication_format = I2S_COMM_FORMAT_STAND_MAX,			//	funciona, pero mal
-		//		.communication_format = I2S_COMM_FORMAT_I2S,				// 0x01 funciona, pero mal
-		.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-		.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-		.dma_buf_count = 64,
-		.dma_buf_len = 64,
-		.use_apll = 1,
-		.tx_desc_auto_clear = 1,
-		.fixed_mclk = 0
-	};
-
-	i2s_pin_config_t i2s_read_pin_config = {
-		.bck_io_num = GPIO_NUM_5,
-		.ws_io_num = GPIO_NUM_25,
-		.data_out_num = GPIO_NUM_26,
-		.data_in_num = GPIO_NUM_35
-	};
-	i2s_driver_install(I2S_NUM, &i2s_read_config, 0, NULL);
-	i2s_set_pin(I2S_NUM, &i2s_read_pin_config);
-
 }
 
 void set_filter()
@@ -215,7 +173,6 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
     return ESP_OK;
 }
 
-
 void setupCODEC()
 {
 	ESP_LOGI(TAG, "===============setupCODEC===============================");
@@ -232,6 +189,35 @@ void setupCODEC()
 	//if (ret != ESP_OK) { ESP_LOGI(TAG, "[ ES8388 ] ES8388 writereg error : %d", ret); }
     audio_hal_set_volume(board_handle->audio_hal, player_volume);
     ESP_LOGI(TAG, "[ KEY ] Volume set to %d %%", player_volume);
+}
+
+void init_I2S() {
+	ESP_LOGI(TAG, "=============es8388_init=================================");
+	if (es8388_init() != ESP_OK)
+		ESP_LOGI(TAG, "[es8388_init] Audio codec initialization failed!");
+	ESP_LOGI(TAG, "=============init_I2S=================================");
+	i2s_config_t i2s_read_config = {
+		.mode = I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_RX,
+		.sample_rate = 96000,
+		.bits_per_sample = 16,
+		.communication_format = I2S_COMM_FORMAT_STAND_I2S,				// 0x01
+		.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+		.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+		.dma_buf_count = 64,
+		.dma_buf_len = 64,
+		.use_apll = 1,
+		.tx_desc_auto_clear = 1,
+		.fixed_mclk = 0
+	};
+
+	i2s_pin_config_t i2s_read_pin_config = {
+		.bck_io_num = GPIO_NUM_5,
+		.ws_io_num = GPIO_NUM_25,
+		.data_out_num = GPIO_NUM_26,
+		.data_in_num = GPIO_NUM_35
+	};
+	i2s_driver_install(I2S_NUM_0, &i2s_read_config, 0, NULL);
+	i2s_set_pin(I2S_NUM_0, &i2s_read_pin_config);
 
 }
 

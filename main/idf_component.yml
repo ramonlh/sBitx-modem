@@ -1,5 +1,7 @@
 ## IDF Component Manager Manifest File
 dependencies:
+  lvgl/lvgl_esp32_drivers: "==0.0.3"
+  espressif/esp_lcd_ili9341: "==1.0.2"
   espressif/esp-dsp: "==1.2.0"
   ## Required IDF version
   idf:
