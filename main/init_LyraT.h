@@ -112,16 +112,35 @@ static esp_err_t es8388_init()
 	return res;
 }
 
-void set_filter()
+void set_filter(int minF, int maxF)
 {
+  int minBin=minF*4096/48000;
+  int maxBin=maxF*4096/48000;
   for (int i=0; i<MAX_BINS; i++)
   {
-	  if ((i<minf) || (i>maxf))
+	  if ((i<minBin) || (i>maxBin))
 		  fir_coeff[i]=0.0;
 	  else
 		  fir_coeff[i]=1.0;
   }
-  ESP_LOGI(TAG, "[ FILTER ] %i - %i (%i+-%i)",minf, maxf,(minf)*48000/2048, (maxf)*48000/2048);
+  ESP_LOGI(TAG, "[ FILTER ] %i - %i (%i - %i)", minf, maxf, (minf)*48000/4096, (maxf)*48000/4096);
+//  ESP_LOGI(TAG, "[ FILTER ] %i - %i (%i - %i)",minf, maxf,(minf)*48000/2048, (maxf)*48000/2048);
+}
+
+void set_volume(int volume)
+{
+  player_volume = volume;
+  if (player_volume<1) player_volume=1;
+  audio_hal_set_volume(board_handle->audio_hal, player_volume);
+  ESP_LOGI(TAG, "[ VOLUME ] Volume set to %d %%", player_volume);
+}
+
+int spectrumscale=2000000;
+
+void set_gain(int gain)
+{
+  spectrumscale = gain * 1000;
+  ESP_LOGI(TAG, "[ GAIN ] Gain set to %d %%", spectrumscale);
 }
 
 static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_service_event_t *evt, void *ctx)
@@ -134,25 +153,15 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
         switch ((int)evt->data) {
             case INPUT_KEY_USER_ID_REC:				// 1
                 ESP_LOGI(TAG, "[ KEY ] [Rec] input key event (%d)",(int)evt->data );
-                minf = minf - stepfilter; if (minf < 0) minf = 0;
-                maxf = minf + wbfilter;
-                set_filter();
                 break;
             case INPUT_KEY_USER_ID_MODE:			// 4
                 ESP_LOGI(TAG, "[ KEY ] [Mode] input key event (%d)",(int)evt->data );
-                minf = minf + stepfilter; if (minf > maxfilter) minf = maxfilter;
-                maxf = minf + wbfilter;
-                set_filter();
                 break;
             case INPUT_KEY_USER_ID_PLAY:			// 3
                 ESP_LOGI(TAG, "[ KEY ] [Play] input key event (%d)",(int)evt->data );
-                minf = minf + 10;
-                set_filter();
                 break;
             case INPUT_KEY_USER_ID_SET:				// 2
                 ESP_LOGI(TAG, "[ KEY ] [Set] input key event (%d)",(int)evt->data );
-                maxf = maxf - 10;
-                set_filter();
 			    break;
             case INPUT_KEY_USER_ID_VOLDOWN:			// 5
                 ESP_LOGI(TAG, "[ KEY ] [Vol-] input key event (%d)",(int)evt->data );

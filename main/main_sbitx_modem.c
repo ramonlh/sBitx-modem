@@ -19,6 +19,7 @@ static const char *TAG = "sBitx-Modem-LyraT";
 int printed=0;
 
 #include <esp_log.h>
+#include "math.h"
 #include "dsp_common.h"
 #include "dsps_fft2r.h"
 #include "dsps_view.h"
@@ -33,7 +34,6 @@ int printed=0;
 #include "periph_service.h"
 #include "audio_hal.h"
 #include "board.h"
-
 #include "input_key_service.h"
 
 int minf=0;
@@ -41,7 +41,6 @@ int maxf=128;
 int stepfilter=64;
 int wbfilter=128;
 int maxfilter=MAX_BINS*2;
-
 
 #include "init_LyraT.h"
 
@@ -53,6 +52,24 @@ __attribute__((aligned(16)))
 ftab_type fft_in;						// complex
 __attribute__((aligned(16)))
 ftab_type fft_out;						// complex
+
+#define TX_BUFFER_LEN 255
+#define I2C_NUM I2C_NUM_1
+uint8_t data_spectrum[TX_BUFFER_LEN];
+uint8_t ds[MAX_BINS];
+
+typedef struct {    // datos I2C lyraT
+      uint8_t comtype;
+      uint16_t min_f;    // lim inferior filtro
+      uint16_t max_f;    // lim superior filtro
+      uint16_t gain;     // gain
+      uint16_t spscale;  // spectrum scale
+      uint16_t volume;   // volume
+      uint16_t ssbmode;  // lsb/usb
+      uint16_t cwmode;   // cwmode
+} datalyratype;
+      datalyratype datalyra;
+      uint8_t *bufflyra = (uint8_t *) &datalyra; // acceder a datalyratype como bytes
 
 void printtab(int n, ftab_type tab, char* title)	{
 	if (printed != n) return;
@@ -79,7 +96,7 @@ static void timer1(void *pvParameters)
 	int logtime=1;
 	while(1) {
 //		ESP_LOGI(TAG, "Cycles:%i,  size(samples),:%i ",countcycles,sizeof(samples));
-		countcycles=0;
+		//countcycles=0;
 		vTaskDelay(logtime*1000 / portTICK_PERIOD_MS);
 	}
 }
@@ -94,7 +111,7 @@ static void audio_test_task(void *pvParameters)
 		i2s_read(I2S_NUM_0, samples, I2S_BUFFLEN, &bytes_read, portMAX_DELAY);
 		i2s_write(I2S_NUM_0, samples, bytes_read, &bytes_writen, portMAX_DELAY);
     	printed++;
-		countcycles++;
+		//countcycles++;
     }
     vTaskDelete(NULL);
 }
@@ -112,7 +129,6 @@ void myfilter(float *data, int N, int fmin, int fmax)
 		}
 	}
 }
-
 
 static void audio_modem_task(void *pvParameters)
 {
@@ -143,10 +159,22 @@ static void audio_modem_task(void *pvParameters)
     	}
     	for (int i=0;i<MAX_BINS*2;i++)
     		fft_out[i]=fft_in[i];
+
     // Step 3, convert the time domain samples to  frequency domain
 		FFT(fft_out, MAX_BINS);		// FFT forward
 
-	    if (SSB_MODE == MODE_LSB || SSB_MODE == MODE_CWR)	{
+//////////////////////  Spectrum ////////////////////////
+
+		int bin_ini=1024;
+       	for (int i = 0; i < TX_BUFFER_LEN; i++)
+        	{
+       		int index = (4 * 2 * i) + bin_ini;
+			data_spectrum[i] =  (int)sqrt((fft_out[index] * fft_out[index]) + (fft_out[index+1] * fft_out[index+1])) / spectrumscale;
+        	}
+
+///////////////////////////////////////////////////////////////////////////////
+
+       	if (SSB_MODE == MODE_LSB || SSB_MODE == MODE_CWR)	{
 	    	for (int i = 0; i < MAX_BINS/2; i++)
 	        	{
 	        	}
@@ -160,18 +188,18 @@ static void audio_modem_task(void *pvParameters)
 	    		fft_out[2*i+MAX_BINS+1] = 0;
 	        	}
 	    }
-		for (int i = 0; i < MAX_BINS; i++)	{
+		for (int i = 0; i < MAX_BINS; i++)	{				// filter
 			fft_out[2*i] = fft_out[2*i] * fir_coeff[i];
 			fft_out[2*i+1] = fft_out[2*i+1] * fir_coeff[i];
 			}
+
 		// Step 7,  FFT Reverse, convert to domain time
 		rFFT(fft_out,MAX_BINS,3);
 
 		// Step 7.4, 	scale
-		float gain=200;
-		for (int i=0;i<MAX_BINS;i++)	    {	// scale
-			fft_out[2*i]=fft_out[2*i]*gain;
-			fft_out[2*i+1]=fft_out[2*i]*gain;
+		for (int i=0;i<MAX_BINS;i++)	    {	// scale/gain
+			fft_out[2*i]=fft_out[2*i]*datalyra.gain * 5;
+			fft_out[2*i+1]=fft_out[2*i]*datalyra.gain * 5;
 			fft_out[2*i]=0;
 			//fft_out[2*i+1]=0;
 			}
@@ -205,26 +233,13 @@ void init_data()
 		fft_in[2*i]=0; fft_in[2*i+1]=0;
 		fft_out[2*i]=0; fft_out[2*i+1]=0;
 	}
-    set_filter();
+    set_filter(datalyra.min_f,datalyra.max_f);
 }
 
 void init_DSP()
 {
     dsps_fft2r_init_fc32(NULL, N_SAMPLES);
 }
-
-#define RX_BUFFER_LEN 255
-#define TX_BUFFER_LEN 255
-#define I2C_NUM I2C_NUM_1
-
-typedef struct {    // datos I2C lyraT
-      uint8_t comtype;
-      uint16_t min_f;    // lim inferior filtro
-      uint16_t max_f;    // lim superior filtro
-      uint16_t gain;     // gain
-} datalyratype;
-      datalyratype datalyra;
-      uint8_t *bufflyra = (uint8_t *) &datalyra; // acceder a datalyratype como bytes
 
 static void i2c_handle_task(void *pvParameters)
 {
@@ -239,32 +254,43 @@ static void i2c_handle_task(void *pvParameters)
     i2c_config.clk_flags = 0;
 
     i2c_param_config(I2C_NUM, &i2c_config);
-    i2c_driver_install(I2C_NUM, I2C_MODE_SLAVE, RX_BUFFER_LEN, TX_BUFFER_LEN, ESP_INTR_FLAG_LEVEL1);
+    i2c_driver_install(I2C_NUM, I2C_MODE_SLAVE, sizeof(datalyra), TX_BUFFER_LEN, ESP_INTR_FLAG_LEVEL1);
 	ESP_LOGI(TAG, "i2c_handle_task start");
-    uint8_t rx_data[RX_BUFFER_LEN] = {0};
-    uint8_t tx_data[32] = "Hello from Slave";
     while (1)
     {
-        int len = i2c_slave_read_buffer(I2C_NUM, bufflyra,RX_BUFFER_LEN,pdMS_TO_TICKS(100));
+    	i2c_reset_rx_fifo(I2C_NUM);
+        int len = i2c_slave_read_buffer(I2C_NUM, bufflyra,sizeof(datalyra),pdMS_TO_TICKS(100));
         if (len > 0)
         {
-    		ESP_LOGI(TAG," comtype: %i  min: %i  max: %i   gain: %i", datalyra.comtype, datalyra.min_f, datalyra.max_f, datalyra.gain);
+    		//ESP_LOGI(TAG," comtype: %i  min: %i  max: %i  gain: %i  vol: %i", datalyra.comtype, datalyra.min_f, datalyra.max_f, datalyra.gain, datalyra.volume);
     		if (datalyra.comtype == 1)		// set filter
     		{
-
+    			minf = datalyra.min_f;
+    			maxf = datalyra.max_f;
+                set_filter(datalyra.min_f,datalyra.max_f);
     		}
     		else if (datalyra.comtype == 2)	// set Gain
     		{
-
+    			set_gain(datalyra.gain);  //
+        		//ESP_LOGI(TAG," gain: %i", datalyra.gain);
     		}
     		else if (datalyra.comtype == 3)	// send spectrum
     		{
+            	int sentbytes = i2c_slave_write_buffer(I2C_NUM, data_spectrum, TX_BUFFER_LEN, pdMS_TO_TICKS(100));
+        		//ESP_LOGI(TAG," ENVIADA RESPUESTA: %i bytes", sentbytes);
     		}
-        	i2c_reset_rx_fifo(I2C_NUM);
-        	i2c_slave_write_buffer(I2C_NUM,tx_data,sizeof(tx_data),pdMS_TO_TICKS(1));
-        	memset(rx_data,0,RX_BUFFER_LEN);
+    		else if (datalyra.comtype == 4)	// set volume
+    		{
+    			set_volume(datalyra.volume);
+        		//ESP_LOGI(TAG," volume: %i", datalyra.volume);
+    		}
+    		else if (datalyra.comtype == 5)	// set spectrum scale
+    		{
+    			spectrumscale=datalyra.spscale * 200000;
+        		//ESP_LOGI(TAG," spectrumscale: %i", spectrumscale);
+    		}
         }
-        vTaskDelay(1 / portTICK_PERIOD_MS);
+		vTaskDelay(1 / portTICK_PERIOD_MS);
     }
 }
 
@@ -283,6 +309,6 @@ void app_main(void)
 
     //xTaskCreate(audio_test_task, "audio_test_task", 10000, NULL, 5, NULL);		// test mode passthrough  input-->output
     xTaskCreate(i2c_handle_task,"i2c_handle_task",10000,NULL,5,NULL);
-    xTaskCreate(audio_modem_task, "audio_modem_task", 10000, NULL, 5, NULL);
+    xTaskCreate(audio_modem_task, "audio_modem_task", 15000, NULL, 5, NULL);
     xTaskCreate(timer1, "timer1", 2048, NULL, 5, NULL);
 }
