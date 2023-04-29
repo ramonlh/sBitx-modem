@@ -15,6 +15,10 @@
 #define ES8388_ADDR 0x20
 
 int player_volume=50;
+unsigned long spectrumatt=1000000;
+//unsigned long spectrumatt=2000000;
+unsigned int spectrumspan=12;
+
 audio_event_iface_handle_t evt;
 audio_board_handle_t board_handle;
 esp_periph_set_handle_t set;
@@ -114,8 +118,8 @@ static esp_err_t es8388_init()
 
 void set_filter(int minF, int maxF)
 {
-  int minBin=minF*4096/48000;
-  int maxBin=maxF*4096/48000;
+  int minBin=minF*4096/96000;
+  int maxBin=maxF*4096/96000;
   for (int i=0; i<MAX_BINS; i++)
   {
 	  if ((i<minBin) || (i>maxBin))
@@ -123,8 +127,7 @@ void set_filter(int minF, int maxF)
 	  else
 		  fir_coeff[i]=1.0;
   }
-  ESP_LOGI(TAG, "[ FILTER ] %i - %i (%i - %i)", minf, maxf, (minf)*48000/4096, (maxf)*48000/4096);
-//  ESP_LOGI(TAG, "[ FILTER ] %i - %i (%i - %i)",minf, maxf,(minf)*48000/2048, (maxf)*48000/2048);
+//  ESP_LOGI(TAG, "[ FILTER ] %i - %i (%i - %i)", minF, maxF, (minF)*96000/4096, (maxf)*96000/4096);
 }
 
 void set_volume(int volume)
@@ -132,15 +135,18 @@ void set_volume(int volume)
   player_volume = volume;
   if (player_volume<1) player_volume=1;
   audio_hal_set_volume(board_handle->audio_hal, player_volume);
-  ESP_LOGI(TAG, "[ VOLUME ] Volume set to %d %%", player_volume);
 }
-
-int spectrumscale=2000000;
 
 void set_gain(int gain)
 {
-  spectrumscale = gain * 1000;
-  ESP_LOGI(TAG, "[ GAIN ] Gain set to %d %%", spectrumscale);
+  gain = gain * 1000;
+  ESP_LOGI(TAG, "[ GAIN ] Gain set to %d %%", gain);
+}
+
+void set_spectrumatt(int value)
+{
+	spectrumatt=value * 1000000;
+	//ESP_LOGI(TAG, "[ SPECTRUM ATT ] Spectrum att set to %d %%", spectrumatt);
 }
 
 static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_service_event_t *evt, void *ctx)

@@ -14,7 +14,7 @@ __attribute__((aligned(16)))
 ftab_type twiddle_factors;				// complex (cos,sin)
 // Window coefficients
 __attribute__((aligned(16)))
-float wind[MAX_BINS];					// real only
+float hann_window[MAX_BINS];					// real only
 __attribute__((aligned(16)))
 ftab_type fir_coeff;					// complex
 
@@ -22,7 +22,7 @@ void FFT_init(int N)
 {
 	dsps_fft2r_init_fc32(twiddle_factors, CONFIG_DSP_MAX_FFT_SIZE);	// init FFT tables
 	dsps_gen_w_r2_fc32(twiddle_factors, N*2);	// init factor cos/sin
-    dsps_wind_hann_f32(wind, N);				// Generate hann window
+    dsps_wind_hann_f32(hann_window, N);				// Generate hann window
 }
 
 void FFT(float *data, int N)	// FFT forward
