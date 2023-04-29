@@ -145,7 +145,8 @@ void set_gain(int gain)
 
 void set_spectrumatt(int value)
 {
-	spectrumatt=value * 1000000;
+	spectrumatt=value * 10000;
+	//spectrumatt=value * 1000000;
 	//ESP_LOGI(TAG, "[ SPECTRUM ATT ] Spectrum att set to %d %%", spectrumatt);
 }
 

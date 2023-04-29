@@ -15,7 +15,7 @@ static const char *TAG = "sBitx-Modem-LyraT";
 #define I2S_BUFFLEN N_SAMPLES * 4	// 8192
 #define R_TUNED_BIN MAX_BINS / 4	// 512
 #define SSB_MODE MODE_USB
-#define power2db(x) (10*log10f(x))
+#define power2dB(x) (10*log10f(x))
 
 #include <esp_log.h>
 #include "math.h"
@@ -51,10 +51,15 @@ __attribute__((aligned(16)))
 ftab_type fft_in;						// complex
 __attribute__((aligned(16)))
 ftab_type fft_out;						// complex
+__attribute__((aligned(16)))
+ftab_type fft_out2;						// complex
+__attribute__((aligned(16)))
+ftab_type fft_spectrum;						// complex
 
 #define TX_BUFFER_LEN 255
 #define I2C_NUM I2C_NUM_1
 uint8_t data_spectrum[TX_BUFFER_LEN];
+uint8_t data_spectrum_aver[TX_BUFFER_LEN];
 uint8_t ds[MAX_BINS];
 
 float spectrum_speed = 0.1;
@@ -121,6 +126,7 @@ static void audio_modem_task(void *pvParameters)
 	FFT_init(MAX_BINS);
     float i_sample, q_sample;
 	size_t bytes_read = 0;
+	memset(data_spectrum_aver,0,sizeof(data_spectrum_aver));
     while (1) {
     // Step 0, read samples
 		// int type range min=-2147483648, max=2147483647
@@ -133,7 +139,6 @@ static void audio_modem_task(void *pvParameters)
     // Step 2, // add the new set of samples to 2/2 fft_m & 1/2 fft_in
     	int j = 0;
     	for (int i = MAX_BINS/2; i < MAX_BINS; i++)    	{
-//    		i_sample = (float)samples[2*j];    	 // canal L
     		i_sample = (float)samples[2*j+1];    // canal R
     		q_sample = 0;
     		fft_m[2*j] = i_sample;		// real
@@ -143,50 +148,55 @@ static void audio_modem_task(void *pvParameters)
     		fft_in[2*i+1] = q_sample;	// imag
     		j++;
     	}
-    	for (int i=0;i<MAX_BINS*2;i++)		// pendiente de cambiar, sobra este paso
+    	for (int i=0;i<MAX_BINS*2;i++)		// pendiente de cambiar, sobra este paso ?
     	{
     		fft_out[i]=fft_in[i];
+    		fft_out2[i]=fft_in[i];
     	}
 
-        // Step 3, convert the time domain samples to  frequency domain
-    		FFT(fft_out, MAX_BINS);		// FFT forward
+    // Step 3, convert the time domain samples to  frequency domain
+    	FFT(fft_out, MAX_BINS);		// FFT forward for audio
 
-  	    // Step 3-B, convert the time domain samples to  frequency domain
+  	//////////////////////  Spectrum ////////////////////////
+    // Step 3-B, convert the time domain samples to  frequency domain
    			// MULTIPLICAR POR LA VENTANA HANN ANTES DE HACER FFT SOLO PARA EL ESPECTRO
-//////////////////////  Spectrum ////////////////////////
-
+    	for (int i=0; i<MAX_BINS;i++)
+    	{
+    		fft_out2[2*i] = fft_out2[2*i]  * hann_window[i];
+    	}
+    	FFT(fft_out2, MAX_BINS);	// FFT forward for spectrum
+    	int step_bin = 4;
+    	int aver_bins = 1;
+		int bin_ini = 1532;
 		if (spectrumspan == 12)
-   		{
-			int bin_ini=1408;
-       		for (int i = 0; i < TX_BUFFER_LEN; i++)		// BUENO
-       		   	{
-       		   		int index = (4 * i) + bin_ini;
-       		   		float auxfftr = fft_out[index+i];
-       		   		float auxffti = fft_out[index+i+1];
-       		   		int y=sqrt((auxfftr * auxfftr) + (auxffti * auxffti));
-       				data_spectrum[i] =  ((int)(y) / spectrumatt);
-       				//printf("%i;%i\n",i,data_spectrum[i]);
-       		   	}
-
-		}
-		else if (spectrumspan == 24)
 		{
-			int bin_ini=1024;
-	       	for (int i = 0; i < TX_BUFFER_LEN; i++)
-	        	{
-	       		int index = (8 * i) + bin_ini;
-	       		float auxfftr = 0;
-	       		float auxffti = 0;
-	       		for (int i = 0; i < 8; i++)
-	       		{
-	       			auxfftr = auxfftr + fft_out[index+i];
-	       			auxffti = auxffti + fft_out[index+i+1];
-	       		}
-	       		auxfftr = auxfftr / 8;
-	       		auxffti = auxffti / 8;
-				data_spectrum[i] =  (int)(sqrt((auxfftr * auxfftr) + (auxffti * auxffti)) / spectrumatt);
-	        	}
+	    	step_bin = 4;
+	    	aver_bins = 1;
+			bin_ini= 1532;
 		}
+		if (spectrumspan == 24)
+		{
+	    	step_bin = 8;
+	    	aver_bins = 1;
+			bin_ini= 1024;
+		}
+       	for (int i = 0; i < TX_BUFFER_LEN; i++)
+       	{
+      		int index = (step_bin * i) + bin_ini;
+      		float auxfftr = 0;
+       		float auxffti = 0;
+       		for (int i = 0; i < aver_bins; i++)
+       		{
+       			auxfftr = auxfftr + fft_out2[index+i];
+       			auxffti = auxffti + fft_out2[index+i+1];
+       		}
+       		auxfftr = auxfftr / aver_bins;
+       		auxffti = auxffti / aver_bins;
+       		float y=power2dB(sqrt((auxfftr * auxfftr) + (auxffti * auxffti)) / spectrumatt);
+			data_spectrum[i] =  ((1.0-spectrum_speed) * data_spectrum_aver[i]) + (spectrum_speed * (int)y);
+			data_spectrum_aver[i] = data_spectrum[i];
+			//printf("%i;%i\n",i,data_spectrum[i]);
+       	}
 
 
 ///////////////////////////////////////////////////////////////////////////////
