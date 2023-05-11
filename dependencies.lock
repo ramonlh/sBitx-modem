@@ -1,33 +1,15 @@
 dependencies:
   espressif/esp-dsp:
-    component_hash: c29c9c96e39bebf3a6b721b7805988480b5b25f51f4359effd4c4139abb9dd51
+    component_hash: null
     source:
-      service_url: https://api.components.espressif.com/
-      type: service
-    version: 1.2.0
-  espressif/esp_lcd_ili9341:
-    component_hash: 53ec49a96629686cbe26ed79ee9322496ef12a0660d5aa4d6c75f6aeaaecd2f6
-    source:
-      service_url: https://api.components.espressif.com/
-      type: service
-    version: 1.0.2
+      path: /home/ramon/esp/esp-dsp
+      type: local
+    version: 1.3.0
   idf:
     component_hash: null
     source:
       type: idf
-    version: 4.4.3
-  lvgl/lvgl:
-    component_hash: 77ce3a05acc0f9709986d61ab2655f6e15c5803f8866aa7fe94a6cfeee6c0cd1
-    source:
-      service_url: https://api.components.espressif.com/
-      type: service
-    version: 7.11.0
-  lvgl/lvgl_esp32_drivers:
-    component_hash: 8af46443f02692ce89c107eb0203a3d9e005407c478062f1ccde39ead2481282
-    source:
-      service_url: https://api.components.espressif.com/
-      type: service
-    version: 0.0.3
-manifest_hash: f30692504fb3b9afd308eb3d3f3b3414fa1bab9ac6a946ee084107968a3d25ed
+    version: 4.4.4
+manifest_hash: 36ae42afaf256adb75afa16fc90c023df136f2d4456df37652bedf6931af4622
 target: esp32
 version: 1.0.0
