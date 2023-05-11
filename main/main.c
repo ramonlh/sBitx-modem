@@ -1,7 +1,9 @@
+
+
 #include <stdio.h>
+#include <string.h>
 #include <stdbool.h>
 #include <unistd.h>
-
 
 static const char *TAG = "sBitx-Modem-LyraT";
 
@@ -15,13 +17,13 @@ static const char *TAG = "sBitx-Modem-LyraT";
 #define I2S_BUFFLEN N_SAMPLES * 4	// 8192
 #define R_TUNED_BIN MAX_BINS / 4	// 512
 #define SSB_MODE MODE_USB
-
-int printed=0;
+#define power2dB(x) (10*log10f(x))
 
 #include <esp_log.h>
+#include "math.h"
 #include "dsp_common.h"
 #include "dsps_fft2r.h"
-#include "dsps_view.h"
+//#include "dsps_view.h"
 #include "dsps_wind_hann.h"
 #include "dsps_tone_gen.h"
 
@@ -33,7 +35,6 @@ int printed=0;
 #include "periph_service.h"
 #include "audio_hal.h"
 #include "board.h"
-
 #include "input_key_service.h"
 
 int minf=0;
@@ -52,9 +53,37 @@ __attribute__((aligned(16)))
 ftab_type fft_in;						// complex
 __attribute__((aligned(16)))
 ftab_type fft_out;						// complex
+__attribute__((aligned(16)))
+ftab_type fft_out2;						// complex
+__attribute__((aligned(16)))
+ftab_type fft_spectrum;						// complex
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+#define TX_BUFFER_LEN 255
+#define I2C_NUM I2C_NUM_1
+
+uint8_t data_spectrum[TX_BUFFER_LEN];
+uint8_t data_spectrum_aver[TX_BUFFER_LEN];
+uint8_t ds[MAX_BINS];
+
+float spectrum_speed = 0.5;
+
+typedef struct {    // datos I2C lyraT
+      uint8_t comtype;
+      uint16_t min_f;    // lim inferior filtro
+      uint16_t max_f;    // lim superior filtro
+      uint16_t gain;     // gain
+      uint16_t spspan;   // spectrum span
+      uint16_t spatt;    // spectrum att
+      uint16_t volume;   // volume
+      uint16_t ssbmode;  // lsb/usb
+      uint16_t cwmode;   // cwmode
+} datalyratype;
+      datalyratype datalyra;
+      uint8_t *bufflyra = (uint8_t *) &datalyra; // acceder a datalyratype como bytes
+
 
 void printtab(int n, ftab_type tab, char* title)	{
-	if (printed != n) return;
 	printf(title);
 	printf("  -----------------\r\n");
 	for (int i=0; i< MAX_BINS; i++)   {
@@ -64,7 +93,6 @@ void printtab(int n, ftab_type tab, char* title)	{
 }
 
 void printsamples(int n)	{
-	if (printed != n) return;
 	printf("samples");
 	printf("  -----------------\r\n");
 	for (int i=0; i<N_SAMPLES/2; i++)   {
@@ -77,8 +105,8 @@ static void timer1(void *pvParameters)
 {
 	int logtime=1;
 	while(1) {
-		ESP_LOGI(TAG, "Cycles:%i,  size(samples),:%i ",countcycles,sizeof(samples));
-		countcycles=0;
+//		ESP_LOGI(TAG, "Cycles:%i,  size(samples),:%i ",countcycles,sizeof(samples));
+		//countcycles=0;
 		vTaskDelay(logtime*1000 / portTICK_PERIOD_MS);
 	}
 }
@@ -90,110 +118,98 @@ static void audio_test_task(void *pvParameters)
 	size_t bytes_read = 0;
 	size_t bytes_writen = 0;
     while (1) {
-		i2s_read(I2S_PORT, samples, I2S_BUFFLEN, &bytes_read, portMAX_DELAY);
-		i2s_write(I2S_PORT, samples, bytes_read, &bytes_writen, portMAX_DELAY);
-    	printed++;
-		countcycles++;
+		i2s_read(I2S_NUM_0, samples, I2S_BUFFLEN, &bytes_read, portMAX_DELAY);
+		i2s_write(I2S_NUM_0, samples, bytes_read, &bytes_writen, portMAX_DELAY);
+		//countcycles++;
     }
     vTaskDelete(NULL);
 }
 
-void myfilter(float *data, int N, int fmin, int fmax)
-{
-	int xmin, xmax;
-	xmin = fmin / 23.4375;
-	xmax = fmax / 23.4375;
-	//printf("xmin:%i,  xmax:%i\n", xmin, xmax);
-	for (int i = 0; i < MAX_BINS/2; i++)	{
-		if ((i<xmin) || (i>xmax))	{
-			data[2*i] = 0;
-			data[2*i+1] = 0;
-		}
-	}
-}
-
-
 static void audio_modem_task(void *pvParameters)
 {
 	FFT_init(MAX_BINS);
-
     float i_sample, q_sample;
-
 	size_t bytes_read = 0;
+	memset(data_spectrum_aver,0,sizeof(data_spectrum_aver));
     while (1) {
     // Step 0, read samples
-		i2s_read(I2S_PORT, samples, I2S_BUFFLEN, &bytes_read, portMAX_DELAY);
+		// int type range min=-2147483648, max=2147483647
+		i2s_read(I2S_NUM_0, samples, I2S_BUFFLEN, &bytes_read, portMAX_DELAY);
 	// Step 1, copy 1/2 fft_m to fft_in
 		for (int i = 0; i < MAX_BINS/2; i++)	{
-		    fft_in[2*i] = fft_m[2*i];
-		    fft_in[2*i+1] = fft_m[2*i+1];
+		    fft_in[2*i] = fft_m[2*i];			// real
+		    fft_in[2*i+1] = fft_m[2*i+1];		// imag
 		}
     // Step 2, // add the new set of samples to 2/2 fft_m & 1/2 fft_in
     	int j = 0;
     	for (int i = MAX_BINS/2; i < MAX_BINS; i++)    	{
-    		i_sample = (float)samples[2*j];    // canal L
+    		i_sample = (float)samples[2*j+1];    // canal R
     		q_sample = 0;
-    		fft_m[2*j] = i_sample;
-    		fft_m[2*j+1] = q_sample;
+    		fft_m[2*j] = i_sample;		// real
+    		fft_m[2*j+1] = q_sample;	// imag
 
-    		fft_in[2*i] = i_sample;
-    		fft_in[2*i+1] = q_sample;
+    		fft_in[2*i] = i_sample;		// real
+    		fft_in[2*i+1] = q_sample;	// imag
     		j++;
     	}
-    	for (int i=0;i<MAX_BINS*2;i++)
+    	for (int i=0;i<MAX_BINS*2;i++)		// pendiente de cambiar, sobra este paso ?
+    	{
     		fft_out[i]=fft_in[i];
+    		fft_out2[i]=fft_in[i];
+    	}
+
     // Step 3, convert the time domain samples to  frequency domain
-		FFT(fft_out, MAX_BINS);		// FFT forward
+    	FFT(fft_out, MAX_BINS);		// FFT forward for audio
 
-		/****
-	    // Step 4, rotate tab, fft_in --> fft_out
-	    for (int i = 0; i < MAX_BINS; i++)	      {
-	      int b = i + R_TUNED_BIN;
-	      if (b >= MAX_BINS)
-	          b = b - MAX_BINS;
-	      if (b < 0)
-	          b = b + MAX_BINS;
-	      fft_out[2*i] = fft_in[2*b];
-	      fft_out[2*i+1] = fft_in[2*b+1];
+  	//////////////////////  Spectrum ////////////////////////
+    // Step 3-B, convert the time domain samples to  frequency domain
+   			// MULTIPLICAR POR LA VENTANA HANN ANTES DE HACER FFT SOLO PARA EL ESPECTRO
+    	for (int i=0; i<MAX_BINS;i++)
+    	{
+    		fft_out2[2*i] = fft_out2[2*i]  * hann_window[i];
+    	}
+    	FFT(fft_out2, MAX_BINS);	// FFT forward for spectrum
+    	int step_bin = 4;
+    	int aver_bins = 1;
+		int bin_ini = 1532;
+		if (spectrumspan == 12)
+		{
+	    	step_bin = 4;
+	    	aver_bins = 1;
+			bin_ini= 1536;
+		}
+		if (spectrumspan == 24)
+		{
+	    	step_bin = 8;
+	    	aver_bins = 1;
+			bin_ini= 1024;
+		}
+       	for (int i = 0; i < TX_BUFFER_LEN; i++)
+       	{
+      		int index = (step_bin * i) + bin_ini;
+      		float auxfftr = 0;
+       		float auxffti = 0;
+       		for (int i = 0; i < aver_bins; i++)
+       		{
+       			auxfftr = auxfftr + fft_out2[index+i];
+       			auxffti = auxffti + fft_out2[index+i+1];
+       		}
+       		auxfftr = auxfftr / aver_bins;
+       		auxffti = auxffti / aver_bins;
+       		float y=power2dB(sqrt((auxfftr * auxfftr) + (auxffti * auxffti)) / spectrumatt);
+			data_spectrum[i] =  ((1.0-spectrum_speed) * data_spectrum_aver[i]) + (spectrum_speed * (int)y);
+			data_spectrum_aver[i] = data_spectrum[i];
+			//printf("%i;%i\n",i,data_spectrum[i]);
+       	}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+       	if (SSB_MODE == MODE_LSB || SSB_MODE == MODE_CWR)
+       	{
 	    }
-	    ***/
-		//printtab(20,fft_out,"fft_out rotated");
-	    // Step 5, // zero out the other sideband
-/**
-	    if (SSB_MODE == MODE_LSB || SSB_MODE == MODE_CWR)
-	    	{
-	    	for (int i = 0; i < MAX_BINS/2; i++)    // de 0 a 511
-	        	{
-	    		fft_out[2*i] = 0;
-	    		fft_out[2*i+1] = 0;
-	        	}
-	       	 }
-	     else
-	         {
-	      	 for (int i = MAX_BINS/2; i < MAX_BINS; i++) // de 512 a 1023
-	         	 {
-	    		 fft_out[2*i] = 0;
-	    		 fft_out[2*i+1] = 0;
-	         	 }
-	         }
-
-		//printtab(20,fft_out,"fft_out SSB zero");
-**/
-/**
-
-	    // Step 6,  apply the filter to the signal, in frequency domain we just multiply the filter
-		for (int i = 0; i < MAX_BINS; i++)	{
-			fft_out[2*i] = fft_out[2*i] * fir_coeff[i];
-			fft_out[2*i+1] = fft_out[2*i+1] * fir_coeff[i];
-			}
-**/
-
-	    if (SSB_MODE == MODE_LSB || SSB_MODE == MODE_CWR)	{
-	    	for (int i = 0; i < MAX_BINS/2; i++)
-	        	{
-	        	}
-	    }
-	    else	{		// USB
+	    else
+	    {		// USB
 	    	for (int i = 0; i < MAX_BINS/2; i++)
 	        	{
 	    		fft_out[2*i] = fft_out[2*i+MAX_BINS];
@@ -202,31 +218,27 @@ static void audio_modem_task(void *pvParameters)
 	    		fft_out[2*i+MAX_BINS+1] = 0;
 	        	}
 	    }
-		for (int i = 0; i < MAX_BINS; i++)	{
+		for (int i = 0; i < MAX_BINS; i++)	{				// filter
 			fft_out[2*i] = fft_out[2*i] * fir_coeff[i];
 			fft_out[2*i+1] = fft_out[2*i+1] * fir_coeff[i];
 			}
+
 		// Step 7,  FFT Reverse, convert to domain time
 		rFFT(fft_out,MAX_BINS,3);
 
 		// Step 7.4, 	scale
-		float scale=200;
-		for (int i=0;i<MAX_BINS;i++)	    {	// scale
-			fft_out[2*i]=fft_out[2*i]*scale;
-			fft_out[2*i+1]=fft_out[2*i]*scale;
-			fft_out[2*i]=0;
-			//fft_out[2*i+1]=0;
+		for (int i=0;i<MAX_BINS;i++)	    {	// scale/gain
+			fft_out[2*i]=0;    									// Left channel		// 5
+			fft_out[2*i+1]=fft_out[2*i+1]*datalyra.gain * 5;    // Rigth channel		// 5
 			}
-		// Step 8,	CAG
+		// Step 8,	AGC
 
 	    // Step 9,  copy fft_out to samples
 	    for (int i=0; i<MAX_BINS/2; i++)	    {
-	    	//samples[2*i] = fft_out[2*i + (MAX_BINS/2) + 1]; // Rigth channel
-	        samples[2*i] = fft_out[2*i];		// Rigth channel
-	        samples[2*i+1] = fft_out[2*i+1];    // Left channel
+	        samples[2*i] = 0;					// Left channel
+	        samples[2*i+1] = fft_out[2*i+1];    // Rigth channel
 	    }
-		i2s_write(I2S_PORT, samples, I2S_BUFFLEN, &bytes_read, portMAX_DELAY);
-    	printed++;
+		i2s_write(I2S_NUM_0, samples, I2S_BUFFLEN, &bytes_read, portMAX_DELAY);
 		countcycles++;
 		vTaskDelay(1 / portTICK_PERIOD_MS);
     }
@@ -247,12 +259,71 @@ void init_data()
 		fft_in[2*i]=0; fft_in[2*i+1]=0;
 		fft_out[2*i]=0; fft_out[2*i+1]=0;
 	}
-    set_filter();
+    set_filter(datalyra.min_f,datalyra.max_f);
 }
 
 void init_DSP()
 {
     dsps_fft2r_init_fc32(NULL, N_SAMPLES);
+}
+
+static void i2c_handle_task(void *pvParameters)
+{
+    i2c_config_t i2c_config = {};
+    i2c_config.mode = I2C_MODE_SLAVE;
+    i2c_config.sda_io_num = 14;			// OK, probado
+    i2c_config.scl_io_num = 15;			// OK, probado
+    i2c_config.sda_pullup_en = true;
+    i2c_config.scl_pullup_en = true;
+    i2c_config.slave.addr_10bit_en=0;
+    i2c_config.slave.slave_addr=0x32;
+    i2c_config.clk_flags = 0;
+
+    i2c_param_config(I2C_NUM, &i2c_config);
+    i2c_driver_install(I2C_NUM, I2C_MODE_SLAVE, sizeof(datalyra), TX_BUFFER_LEN, ESP_INTR_FLAG_LEVEL1);
+	ESP_LOGI(TAG, "i2c_handle_task start");
+    while (1)
+    {
+    	i2c_reset_rx_fifo(I2C_NUM);
+        int len = i2c_slave_read_buffer(I2C_NUM, bufflyra,sizeof(datalyra),pdMS_TO_TICKS(100));
+        if (len > 0)
+        {
+    		//ESP_LOGI(TAG," comtype: %i  min: %i  max: %i  gain: %i  vol: %i", datalyra.comtype, datalyra.min_f, datalyra.max_f, datalyra.gain, datalyra.volume);
+    		if (datalyra.comtype == 1)		// set filter
+    		{
+    			minf = datalyra.min_f;
+    			maxf = datalyra.max_f;
+                set_filter(datalyra.min_f,datalyra.max_f);
+                ESP_LOGI(TAG, "recibido filter %i - %i", datalyra.min_f, datalyra.max_f);
+    		}
+    		else if (datalyra.comtype == 2)	// set Gain
+    		{
+    			//set_gain(datalyra.gain);  //
+    			ESP_LOGI(TAG, "recibido gain %i",datalyra.gain);
+    		}
+    		else if (datalyra.comtype == 3)	// send spectrum
+    		{
+            	int sentbytes = i2c_slave_write_buffer(I2C_NUM, data_spectrum, TX_BUFFER_LEN, pdMS_TO_TICKS(100));
+        		//ESP_LOGI(TAG,"Rec: comtype= %i,  ENVIADA RESPUESTA: %i bytes de %i", datalyra.comtype, sentbytes,TX_BUFFER_LEN);
+    		}
+    		else if (datalyra.comtype == 4)	// set volume
+    		{
+    			set_volume(datalyra.volume);
+    			ESP_LOGI(TAG, "recibido volume %i",datalyra.volume);
+    		}
+    		else if (datalyra.comtype == 5)	// set spectrum att
+    		{
+    			set_spectrumatt(datalyra.spatt);
+    			ESP_LOGI(TAG, "recibido sp att %i",datalyra.spatt);
+    		}
+    		else if (datalyra.comtype == 6)	// set spectrum span
+    		{
+    			spectrumspan = datalyra.spspan;
+    			ESP_LOGI(TAG, "recibido sp span %i",spectrumspan);
+    		}
+        }
+		vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
 }
 
 void app_main(void)
@@ -267,7 +338,9 @@ void app_main(void)
 	setupKEYS();		// 6
     init_data();		// 7
     init_DSP();			// 8
+
     //xTaskCreate(audio_test_task, "audio_test_task", 10000, NULL, 5, NULL);		// test mode passthrough  input-->output
-    xTaskCreate(audio_modem_task, "audio_modem_task", 10000, NULL, 5, NULL);
+    xTaskCreate(i2c_handle_task,"i2c_handle_task",10000,NULL,5,NULL);
+    xTaskCreate(audio_modem_task, "audio_modem_task", 15000, NULL, 5, NULL);
     xTaskCreate(timer1, "timer1", 2048, NULL, 5, NULL);
 }

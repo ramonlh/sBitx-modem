@@ -13,6 +13,7 @@
 #include <driver/i2c.h>
 
 #define ES8388_ADDR 0x20
+#define WIRE_CLOCK 800000		// default = 100000
 
 int player_volume=50;
 unsigned long spectrumatt=1000000;
@@ -57,7 +58,7 @@ static esp_err_t es8388_init()
 		.scl_io_num = GPIO_NUM_23,
 		.sda_pullup_en = true,
 		.scl_pullup_en = true,
-		.master.clk_speed = 100000
+		.master.clk_speed = WIRE_CLOCK
 	};
 
 	res |= i2c_param_config(I2C_NUM_0, &i2c_config);
